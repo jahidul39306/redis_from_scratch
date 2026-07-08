@@ -5,6 +5,7 @@
 # Executables
 *.out
 *.exe
+server
 
 # Debug files
 *.dSYM/
