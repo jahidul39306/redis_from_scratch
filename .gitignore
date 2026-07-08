@@ -1,0 +1,15 @@
+# Compiled object files
+*.o
+*.obj
+
+# Executables
+*.out
+*.exe
+
+# Debug files
+*.dSYM/
+*.pdb
+
+# Editor/OS junk
+.vscode/
+.DS_Store
