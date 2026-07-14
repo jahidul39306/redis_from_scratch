@@ -6,6 +6,7 @@
 *.out
 *.exe
 server
+client
 
 # Debug files
 *.dSYM/
