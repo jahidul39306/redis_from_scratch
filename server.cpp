@@ -6,6 +6,8 @@
 #include <unistd.h>
 #include <string.h>
 
+const size_t k_max_msg = 4096;
+
 static void die(const char *msg){
     int err = errno;
     fprintf(stderr, "[%d] %s\n", err, msg);
@@ -27,6 +29,32 @@ static void do_something(int connfd) {
 
     char wbuf[] = "world";
     write(connfd, wbuf, strlen(wbuf));
+}
+
+static int32_t read_full(int fd, char *buf, size_t n) {
+    while (n > 0) {
+        ssize_t rv = read(fd, buf, n);
+        if (rv <= 0) {
+            return -1;
+        }
+        assert((size_t)rv <= n);
+        n -= (size_t)rv;
+        buf += rv;
+    }
+    return 0;
+}
+
+static int32_t write_all(int fd, const char *buf, size_t n) {
+    while (n > 0) {
+        ssize_t rv = write(fd, buf, n);
+        if (rv <= 0) {
+            return -1;
+        }
+        assert((size_t)rv <= n);
+        n -= (size_t)rv;
+        buf += rv;
+    }
+    return 0;
 }
 
 int main(){
@@ -59,7 +87,13 @@ int main(){
         
         if (connfd < 0) { continue; }
 
-        do_something(connfd);
+        // do_something(connfd);
+        while (true) {
+            int32_t err = one_request(connfd);
+            if (err) {
+                break;
+            }
+        }
         close(connfd);
     }
 }
