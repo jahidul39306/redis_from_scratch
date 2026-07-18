@@ -21,6 +21,9 @@ static void msg(const char *msg) {
     fprintf(stderr, "%s\n", msg);
 }
 
+static void msg_errno(const char *msg) {
+    fprintf(stderr, "[errno:%d] %s\n", errno, msg);
+}
 
 static int32_t read_full(int fd, char *buf, size_t n) {
     while (n > 0) {
@@ -95,6 +98,24 @@ struct Conn {
     std::vector<uint8_t> outgoing;
 }
 
+static Conn *handle_accept(int fd) {
+    struct sockaddr_in client_addr = {};
+    socklen_t addrlen = sizeof(client_addr);
+    int connfd = accept(fd, (struct sockaddr *)&client_addr, &addrlen);
+        
+    if (connfd < 0) { 
+        msg_errno("accept() error");
+        return NULL;
+    }
+    uint32_t ip = client_addr.sin_addr.s_addr;
+    fprintf(stderr, "new client from %u.%u.%u.%u:%u\n",
+        ip & 255, (ip >> 8) & 255, (ip >> 16) & 255, ip >> 24,
+        ntohs(client_addr.sin_port)
+    );
+
+    
+}
+
 int main(){
     // creating the fd
     int fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -117,13 +138,49 @@ int main(){
     rv = listen(fd, SOMAXCONN); // for linux SOMAXCONN is 4096
     if (rv) { die("listen()"); }
 
+    // list of client connections
+    std::vector<Conn *> fd2conn;
+
     // keep accepting new connections
+    std::vector<struct pollfd> poll_args;
     while (true) {
-        struct sockaddr_in client_addr = {};
-        socklen_t addrlen = sizeof(client_addr);
-        int connfd = accept(fd, (struct sockaddr *)&client_addr, &addrlen);
+        poll_args.clear();
+        // listening socket in the first position
+        struct pollfd pfd = {fd, POLLIN, 0}; // just concern about new clinet
+        poll_args.push_back(pfd);
+
+        //remaining connection sockets
+        for (Conn *conn : fd2conn) {
+            if(!conn) {
+                continue;
+            }
+
+            struct pollfd pfd = {conn->fd, POLLERR, 0};
+            if (conn->want_read) {
+                pfd.events |= POLLIN;
+            }
+            if (conn->want_write) {
+                pfd.events |= POLLOUT;
+            }
+            poll_args.push_back(pfd);
+        }
+
+        int rv = poll(poll_args.data(), (nfds_t)poll_args.size(), -1);
+        // from another signal or interruption not err
+        if (rv < 0 && errno == EINTR) {
+            continue;
+        }
+        // actual err
+        if (rv < 0) {
+            die("poll");
+        }
+
+        // check listening socket, if there is any new client
+        if (poll_args[0].revents & POLLIN) {
+            if (Conn *conn = )
+        }
+
         
-        if (connfd < 0) { continue; }
 
         // do_something(connfd);
         while (true) {
