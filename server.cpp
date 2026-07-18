@@ -7,6 +7,8 @@
 #include <string.h>
 #include <assert.h>
 
+#include <vector>
+
 const size_t k_max_msg = 4096;
 
 static void die(const char *msg){
@@ -80,6 +82,17 @@ static int32_t one_request(int connfd) {
 
     return do_something(connfd, rbuf, len);
 
+}
+
+struct Conn {
+    int fd = -1;
+
+    bool want_read = false;
+    bool want_write = false;
+    bool want_close = false;
+    
+    std::vector<uint8_t> incoming;
+    std::vector<uint8_t> outgoing;
 }
 
 int main(){
