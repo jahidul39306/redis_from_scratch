@@ -87,6 +87,21 @@ static int32_t one_request(int connfd) {
 
 }
 
+static void fd_set_nb(int fd) {
+    errno = 0;
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags == -1) {
+        die("fcnl error");
+    }
+
+    flags |= O_NONBLOCK;
+
+    errno = 0;
+    if(fcntl(fd, F_SETFL, flags) == -1) {
+        die("fcntl error");
+    }
+}
+
 struct Conn {
     int fd = -1;
 
@@ -113,7 +128,14 @@ static Conn *handle_accept(int fd) {
         ntohs(client_addr.sin_port)
     );
 
-    
+    // making blocking fd to non-blocking fd
+    fd_set_nb(connfd);
+
+    // creating Conn for new fd
+    Conn *conn = new Conn();
+    conn->fd = connfd;
+    conn->want_read = true;
+    return conn;
 }
 
 int main(){
@@ -133,6 +155,9 @@ int main(){
     addr.sin_addr.s_addr = htonl(0);
     int rv = bind(fd, (const struct sockaddr *)&addr, sizeof(addr));
     if (rv) { die("bind()"); }
+
+    // setting listening socket to non-blocking
+    fd_set_nb(fd);
 
     // listen
     rv = listen(fd, SOMAXCONN); // for linux SOMAXCONN is 4096
@@ -177,7 +202,14 @@ int main(){
 
         // check listening socket, if there is any new client
         if (poll_args[0].revents & POLLIN) {
-            if (Conn *conn = )
+            if (Conn *conn = handle_accept(fd)) {
+                if (fd2conn.size() <= (size_t)conn->fd) {
+                    fd2conn.resize(conn->fd + 1);
+                }
+                // checking the fd index's value should be null
+                assert(!fd2conn[conn->fd]);
+                fd2conn[conn->fd] = conn;
+            }
         }
 
         
