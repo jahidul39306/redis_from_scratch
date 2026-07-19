@@ -25,19 +25,6 @@ static void msg_errno(const char *msg) {
     fprintf(stderr, "[errno:%d] %s\n", errno, msg);
 }
 
-static int32_t read_full(int fd, char *buf, size_t n) {
-    while (n > 0) {
-        ssize_t rv = read(fd, buf, n);
-        if (rv <= 0) {
-            return -1;
-        }
-        assert((size_t)rv <= n);
-        n -= (size_t)rv;
-        buf += rv;
-    }
-    return 0;
-}
-
 static int32_t write_all(int fd, const char *buf, size_t n) {
     while (n > 0) {
         ssize_t rv = write(fd, buf, n);
@@ -62,29 +49,50 @@ static int32_t do_something(int connfd, char *rbuf, uint32_t len) {
     return write_all(connfd, wbuf, 4 + len);
 }
 
-static int32_t one_request(int connfd) {
-    char rbuf[4 + k_max_msg];
-    errno = 0;
-    int32_t err = read_full(connfd, rbuf, 4);
-    if (err) {
-        msg(errno == 0 ? "EOF" : "read() error");
-        return err;
+static void buf_append(std::vector<uint8_t> &buf, const uint8_t *data, size_t len) {
+    buf.insert(buf.end(), data, data + len);
+}
+
+static void buf_consume(std::vector<uint8_t> &buf, size_t n) {
+    buf.erase(buf.begin(), buf.begin() + n);
+}
+
+static bool try_one_request(Conn *conn) {
+    if (conn->incoming.size() < 4) {
+        return false;
     }
     uint32_t len = 0;
-    memcpy(&len, rbuf, 4);
+    memcpy(&len, conn->incoming.data(), 4);
     if (len > k_max_msg) {
         msg("too long");
-        return -1;
+        conn->want_close = true;
+        return false;
     }
 
-    err = read_full(connfd, &rbuf[4], len);
-    if (err) {
-        msg("read() error");
-        return err;
+    // check if it has all the data or there is some pending data
+    if (4 + len > conn->incoming.size()) {
+        return false;
     }
+    // get the address of where the actual message is 
+    const uint8_t *request = &conn->incoming[4];
 
-    return do_something(connfd, rbuf, len);
+    printf("client says: len:%d data:%.*s\n",
+        len, len < 100 ? len : 100, request);
+    
+    // sending back what it got
+    // set the length of the msg
+    buf_append(conn->outgoing, (const uint8_t *)&len, 4);
+    // set the msg 
+    buf_append(conn->outgoing, request, len);
 
+    // only remove the req, which has been handled
+    buf_consume(conn->incoming, 4 + len);
+    
+    return true;
+}
+
+static void handle_read(Conn *conn) {
+    
 }
 
 static void fd_set_nb(int fd) {
@@ -212,7 +220,17 @@ int main(){
             }
         }
 
-        
+        // handle connection sockets
+        for (size_t i = 1; i < poll_args.size(); i++) {
+            uint32_t ready = poll_args[i].revents;
+            Conn *conn = fd2conn[poll_args[i].fd];
+            if (ready & POLLIN) {
+                handle_read(conn);
+            }
+            if (ready & POLLOUT) {
+                handle_write(conn);
+            }
+        }
 
         // do_something(connfd);
         while (true) {
