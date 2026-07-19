@@ -91,8 +91,60 @@ static bool try_one_request(Conn *conn) {
     return true;
 }
 
+static void handle_write(Conn *conn) {
+    assert(conn->outgoing.size() > 0);
+    ssize_t rv = write(conn->fd, &conn->outgoing[0], conn->outgoing.size());
+    if (rv < 0 && errno == EAGAIN) {
+        return;
+    }
+    if (rv < 0) {
+        msg_errno("write() error");
+        conn->want_close = true;
+        return;
+    }
+
+    buf_consume(conn->outgoing, (size_t)rv);
+
+    if (conn->outgoing.size() == 0) {
+        conn->want_read = true;
+        conn->want_write = false;
+    }
+}
+
 static void handle_read(Conn *conn) {
-    
+    uint8_t buf[64 * 1024];
+    ssize_t rv = read(conn->fd, buf, sizeof(buf));
+    // not err but interupted by another signal
+    if (rv < 0 && errno == EAGAIN) {
+        return;
+    }
+    // error
+    if (rv < 0) {
+        msg_errno("read() error");
+        conn->want_close = true;
+        return;
+    }
+    // EOF
+    if (rv == 0) {
+        if (conn->incoming.size() == 0) {
+            msg("client closed");
+        } else {
+            msg("unexpected EOF");
+        }
+        conn->want_close = true;
+        return;
+    }
+
+    buf_append(conn->incoming, buf, (size_t)rv);
+
+    while (try_one_request(conn)) {}
+
+    if (conn->outgoing.size() > 0) {
+        conn->want_read = false;
+        conn->want_write = true;
+
+        return handle_write(conn);
+    }
 }
 
 static void fd_set_nb(int fd) {
