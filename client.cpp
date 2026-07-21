@@ -101,7 +101,7 @@ int main() {
     if (err) {
         goto L_DONE;
     }
-    err = query(fd, "hello2");
+    err = query(fd, "hello this is jahid, from echo server");
     if (err) {
         goto L_DONE;
     }

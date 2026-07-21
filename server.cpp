@@ -6,10 +6,12 @@
 #include <unistd.h>
 #include <string.h>
 #include <assert.h>
+#include <fcntl.h>
+#include <poll.h>
 
 #include <vector>
 
-const size_t k_max_msg = 4096;
+const size_t k_max_msg = 32 << 20;
 
 static void die(const char *msg){
     int err = errno;
@@ -56,6 +58,17 @@ static void buf_append(std::vector<uint8_t> &buf, const uint8_t *data, size_t le
 static void buf_consume(std::vector<uint8_t> &buf, size_t n) {
     buf.erase(buf.begin(), buf.begin() + n);
 }
+
+struct Conn {
+    int fd = -1;
+
+    bool want_read = false;
+    bool want_write = false;
+    bool want_close = false;
+    
+    std::vector<uint8_t> incoming;
+    std::vector<uint8_t> outgoing;
+};
 
 static bool try_one_request(Conn *conn) {
     if (conn->incoming.size() < 4) {
@@ -162,16 +175,6 @@ static void fd_set_nb(int fd) {
     }
 }
 
-struct Conn {
-    int fd = -1;
-
-    bool want_read = false;
-    bool want_write = false;
-    bool want_close = false;
-    
-    std::vector<uint8_t> incoming;
-    std::vector<uint8_t> outgoing;
-}
 
 static Conn *handle_accept(int fd) {
     struct sockaddr_in client_addr = {};
@@ -282,15 +285,12 @@ int main(){
             if (ready & POLLOUT) {
                 handle_write(conn);
             }
-        }
-
-        // do_something(connfd);
-        while (true) {
-            int32_t err = one_request(connfd);
-            if (err) {
-                break;
+            if ((ready & POLLERR) || conn->want_close) {
+                (void)close(conn->fd);
+                fd2conn[conn->fd] = NULL;
+                delete conn;
             }
         }
-        close(connfd);
     }
+    return 0;
 }
