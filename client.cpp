@@ -107,7 +107,7 @@ int main() {
         die("connect");
     }
 
-    int32_t err = send_req(fd, (const uint8_t *)"hello1", 6);
+    // int32_t err = send_req(fd, (const uint8_t *)"hello1", 7);
     // if (err) {
     //     goto L_DONE;
     // }
@@ -127,7 +127,7 @@ int main() {
     };
 
     for (const std::string &s : query_list) {
-        err = send_req(fd, (const uint8_t *)s.c_str(), s.length());
+        int32_t err = send_req(fd, (const uint8_t *)s.c_str(), s.length());
         if (err) {
             goto L_DONE;
         }
