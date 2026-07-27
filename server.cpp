@@ -13,6 +13,26 @@
 
 const size_t k_max_msg = 32 << 20;
 
+struct Buffer {
+    uint8_t *buffer_begin;
+    uint8_t *buffer_end;
+
+    uint8_t *data_begin;
+    uint8_t *data_end;
+};
+
+static size_t buf_size(const Buffer &buf) {
+    return buf.data_end - buf.data_begin;
+}
+
+void buffer_init(Buffer &buf, size_t cap) {
+    buf.buffer_begin = new uint8_t[cap];
+    buf.buffer_end = buf.buffer_begin + cap;
+
+    buf.data_begin = buf.buffer_begin;
+    buf.data_end = buf.buffer_begin;
+}
+
 static void die(const char *msg){
     int err = errno;
     fprintf(stderr, "[%d] %s\n", err, msg);
@@ -51,12 +71,37 @@ static int32_t do_something(int connfd, char *rbuf, uint32_t len) {
     return write_all(connfd, wbuf, 4 + len);
 }
 
-static void buf_append(std::vector<uint8_t> &buf, const uint8_t *data, size_t len) {
-    buf.insert(buf.end(), data, data + len);
+static bool buf_append(Buffer *buf, const uint8_t *data, size_t len) {
+    size_t free = buf->buffer_end - buf->data_end;
+
+    if (free < len) {
+        size_t used = buf->data_end - buf->data_begin;
+
+        memmove(buf->buffer_begin, buf->data_begin, used);
+
+        buf->data_begin = buf->buffer_begin;
+        buf->data_end = buf->buffer_begin + used;
+
+        free = buf->buffer_end - buf->data_end;
+        if (free < len) {
+            msg("buffer overflow");
+            return false;
+        }
+    }
+    memcpy(buf->data_end, data, len);
+    buf->data_end += len;
+    return true;
 }
 
-static void buf_consume(std::vector<uint8_t> &buf, size_t n) {
-    buf.erase(buf.begin(), buf.begin() + n);
+static void buf_consume(Buffer *buf, size_t n) {
+    assert(buf->data_begin + n <= buf->data_end);
+
+    buf->data_begin += n;
+
+    if (buf->data_begin == buf->data_end) {
+        buf->data_begin = buf->buffer_begin;
+        buf->data_end   = buf->buffer_begin;
+    }
 }
 
 struct Conn {
@@ -66,16 +111,16 @@ struct Conn {
     bool want_write = false;
     bool want_close = false;
     
-    std::vector<uint8_t> incoming;
-    std::vector<uint8_t> outgoing;
+    Buffer incoming;
+    Buffer outgoing;
 };
 
 static bool try_one_request(Conn *conn) {
-    if (conn->incoming.size() < 4) {
+    if (buf_size(conn->incoming) < 4) {
         return false;
     }
     uint32_t len = 0;
-    memcpy(&len, conn->incoming.data(), 4);
+    memcpy(&len, conn->incoming.data_begin, 4);
     if (len > k_max_msg) {
         msg("too long");
         conn->want_close = true;
@@ -83,30 +128,36 @@ static bool try_one_request(Conn *conn) {
     }
 
     // check if it has all the data or there is some pending data
-    if (4 + len > conn->incoming.size()) {
+    if (4 + len > buf_size(conn->incoming)) {
         return false;
     }
     // get the address of where the actual message is 
-    const uint8_t *request = &conn->incoming[4];
+    const uint8_t *request = conn->incoming.data_begin + 4;
 
     printf("client says: len:%d data:%.*s\n",
         len, len < 100 ? len : 100, request);
     
     // sending back what it got
     // set the length of the msg
-    buf_append(conn->outgoing, (const uint8_t *)&len, 4);
+    if (!buf_append(&conn->outgoing, (const uint8_t *)&len, 4)) {
+        conn->want_close = true;
+        return false;
+    }
     // set the msg 
-    buf_append(conn->outgoing, request, len);
+    if (!buf_append(&conn->outgoing, request, len)) {
+        conn->want_close = true;
+        return false;
+    }
 
     // only remove the req, which has been handled
-    buf_consume(conn->incoming, 4 + len);
+    buf_consume(&conn->incoming, 4 + len);
     
     return true;
 }
 
 static void handle_write(Conn *conn) {
-    assert(conn->outgoing.size() > 0);
-    ssize_t rv = write(conn->fd, &conn->outgoing[0], conn->outgoing.size());
+    assert(buf_size(conn->outgoing) > 0);
+    ssize_t rv = write(conn->fd, conn->outgoing.data_begin, buf_size(conn->outgoing));
     if (rv < 0 && errno == EAGAIN) {
         return;
     }
@@ -116,17 +167,17 @@ static void handle_write(Conn *conn) {
         return;
     }
 
-    buf_consume(conn->outgoing, (size_t)rv);
+    buf_consume(&conn->outgoing, (size_t)rv);
 
-    if (conn->outgoing.size() == 0) {
+    if (buf_size(conn->outgoing) == 0) {
         conn->want_read = true;
         conn->want_write = false;
     }
 }
 
 static void handle_read(Conn *conn) {
-    uint8_t buf[64 * 1024];
-    ssize_t rv = read(conn->fd, buf, sizeof(buf));
+    char tmp[4096];
+    ssize_t rv = read(conn->fd, tmp, sizeof(tmp));
     // not err but interupted by another signal
     if (rv < 0 && errno == EAGAIN) {
         return;
@@ -139,7 +190,7 @@ static void handle_read(Conn *conn) {
     }
     // EOF
     if (rv == 0) {
-        if (conn->incoming.size() == 0) {
+        if (buf_size(conn->incoming) == 0) {
             msg("client closed");
         } else {
             msg("unexpected EOF");
@@ -148,11 +199,14 @@ static void handle_read(Conn *conn) {
         return;
     }
 
-    buf_append(conn->incoming, buf, (size_t)rv);
+    if (!buf_append(&conn->incoming, (const uint8_t *)tmp, (size_t)rv)) {
+        conn->want_close = true;
+        return;
+    }
 
     while (try_one_request(conn)) {}
 
-    if (conn->outgoing.size() > 0) {
+    if (buf_size(conn->outgoing) > 0) {
         conn->want_read = false;
         conn->want_write = true;
 
@@ -197,6 +251,8 @@ static Conn *handle_accept(int fd) {
     // creating Conn for new fd
     Conn *conn = new Conn();
     conn->fd = connfd;
+    buffer_init(conn->incoming, k_max_msg);
+    buffer_init(conn->outgoing, k_max_msg);
     conn->want_read = true;
     return conn;
 }
@@ -288,6 +344,8 @@ int main(){
             if ((ready & POLLERR) || conn->want_close) {
                 (void)close(conn->fd);
                 fd2conn[conn->fd] = NULL;
+                delete[] conn->incoming.buffer_begin;
+                delete[] conn->outgoing.buffer_begin;
                 delete conn;
             }
         }
