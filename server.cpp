@@ -11,10 +11,17 @@
 
 #include <vector>
 #include <string>
+#include <map>
 
 
 const size_t k_max_msg = 32 << 20;
 const size_t k_max_args = 3;
+
+enum {
+    RES_OK = 0,
+    RES_ERR = 1,
+    RES_NX  = 2,
+};
 
 struct Buffer {
     uint8_t *buffer_begin;
@@ -154,7 +161,7 @@ static int32_t parse_req(const uint8_t *data, size_t size, std::vector<std::stri
 struct Response {
     uint32_t status = 0;
     std::vector<uint8_t> data;
-}
+};
 
 static std::map<std::string, std::string> g_data;
 
@@ -176,11 +183,11 @@ static void do_request(std::vector<std::string> &cmd, Response &out) {
     }
 }
 
-static void make_response(const Response &resp, std::vector<uint8_t> &out) {
+static void make_response(const Response &resp, Buffer &out) {
     uint32_t resp_len = 4 + (uint32_t)resp.data.size();
-    buf_append(out, (const uint8_t *)&resp_len, 4);
-    buf_append(out, (const uint8_t *)&resp.status, 4);
-    buf_append(out, (const uint8_t *)&resp.data.data(), resp.data.size());
+    buf_append(&out, (const uint8_t *)&resp_len, 4);
+    buf_append(&out, (const uint8_t *)&resp.status, 4);
+    buf_append(&out, resp.data.data(), resp.data.size());
 }
 
 struct Conn {
