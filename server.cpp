@@ -217,23 +217,20 @@ static bool try_one_request(Conn *conn) {
     if (4 + len > buf_size(conn->incoming)) {
         return false;
     }
-    // get the address of where the actual message is 
+    // get to the address of where the actual message is 
     const uint8_t *request = conn->incoming.data_begin + 4;
 
     printf("client says: len:%d data:%.*s\n",
         len, len < 100 ? len : 100, request);
     
-    // sending back what it got
-    // set the length of the msg
-    if (!buf_append(&conn->outgoing, (const uint8_t *)&len, 4)) {
+    std::vector<std::string> cmd;
+    if (parse_req(request, len, cmd) < 0) {
         conn->want_close = true;
         return false;
     }
-    // set the msg 
-    if (!buf_append(&conn->outgoing, request, len)) {
-        conn->want_close = true;
-        return false;
-    }
+    Response resp;
+    do_request(cmd, resp);
+    make_response(resp, conn->outgoing);
 
     // only remove the req, which has been handled
     buf_consume(&conn->incoming, 4 + len);
