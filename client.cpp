@@ -52,14 +52,27 @@ static void buf_append(std::vector<uint8_t> &buf, const uint8_t *data, size_t le
     buf.insert(buf.end(), data, data + len);
 }
 
-static int32_t send_req(int fd, const uint8_t *text, size_t len) {
+static int32_t send_req(int fd, const std::vector<std::string> &cmd) {
+    uint32_t len = 4;
+    for (const std::string &s : cmd) {
+        len += 4 + s.size();
+    }
     if (len > k_max_msg) {
         return -1;
     }
 
-    std::vector<uint8_t> wbuf;
-    buf_append(wbuf, (const uint8_t *)&len, 4);
-    buf_append(wbuf, text, len);
+    char wbuf[4 + k_max_msg];
+    memcpy(&wbuf[0], &len, 4);
+    uint32_t n = cmd.size();
+    memcpy(&wbuf[4], &n, 4);
+    size_t cur = 8;
+    for (const std::string &s : cmd) {
+        uint32_t p = (uint32_t)s.size();
+        memcpy(&wbuf[cur], &p, 4);
+        memcpy(wbuf[cur + 4], s.data(), s.size());
+        cur += 4 + s.size();
+    }
+    
     return write_all(fd, wbuf.data(), wbuf.size());
 }
 
@@ -92,7 +105,7 @@ static int32_t read_res(int fd) {
 }
 
 
-int main() {
+int main(int argc, char **argv) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
         die("socket()");
@@ -107,38 +120,11 @@ int main() {
         die("connect");
     }
 
-    // int32_t err = send_req(fd, (const uint8_t *)"hello1", 7);
-    // if (err) {
-    //     goto L_DONE;
-    // }
-    // err = send_req(fd, (const uint8_t *)"hello this is jahid, from echo server", 34);
-    // if (err) {
-    //     goto L_DONE;
-    // }
-
-    std::vector<std::string> query_list = {
-        "hello2",
-        "hello3",
-        "hello4",
-        "hello5",
-        "hello6",
-        std::string(k_max_msg, 'z'),
-        "hello7",
-    };
-
-    for (const std::string &s : query_list) {
-        int32_t err = send_req(fd, (const uint8_t *)s.c_str(), s.length());
-        if (err) {
-            goto L_DONE;
-        }
+    std::vector<std::string> cmd;
+    for (int i = 0; i < argc; i++) {
+        cmd.push_back(argv[i]);
     }
-
-    for (size_t i = 0; i < query_list.size(); i++) {
-        int32_t err = read_res(fd);
-        if (err) {
-            goto L_DONE;
-        }
-    }
+    int32_t err = send_req(fd, )
 L_DONE:
     close(fd);
     return 0;
