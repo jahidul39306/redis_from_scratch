@@ -22,7 +22,7 @@ static void msg(const char *msg) {
     fprintf(stderr, "%s\n", msg);
 }
 
-static int32_t read_full(int fd, uint8_t *buf, size_t n) {
+static int32_t read_full(int fd, char *buf, size_t n) {
     while (n > 0) {
         ssize_t rv = read(fd, buf, n);
         if (rv <= 0) {
@@ -35,7 +35,7 @@ static int32_t read_full(int fd, uint8_t *buf, size_t n) {
     return 0;
 }
 
-static int32_t write_all(int fd, const uint8_t *buf, size_t n) {
+static int32_t write_all(int fd, const char *buf, size_t n) {
     while (n > 0) {
         ssize_t rv = write(fd, buf, n);
         if (rv <= 0) {
@@ -54,33 +54,38 @@ static void buf_append(std::vector<uint8_t> &buf, const uint8_t *data, size_t le
 
 static int32_t send_req(int fd, const std::vector<std::string> &cmd) {
     uint32_t len = 4;
+
     for (const std::string &s : cmd) {
         len += 4 + s.size();
     }
+
     if (len > k_max_msg) {
         return -1;
     }
 
-    char wbuf[4 + k_max_msg];
+    std::vector<char> wbuf(4 + k_max_msg);
+
     memcpy(&wbuf[0], &len, 4);
+
     uint32_t n = cmd.size();
     memcpy(&wbuf[4], &n, 4);
+
     size_t cur = 8;
+
     for (const std::string &s : cmd) {
         uint32_t p = (uint32_t)s.size();
         memcpy(&wbuf[cur], &p, 4);
-        memcpy(wbuf[cur + 4], s.data(), s.size());
+        memcpy(&wbuf[cur + 4], s.data(), s.size());
         cur += 4 + s.size();
     }
-    
-    return write_all(fd, wbuf.data(), wbuf.size());
+
+    return write_all(fd, wbuf.data(), 4 + len);
 }
 
 static int32_t read_res(int fd) {
-    std::vector<uint8_t> rbuf;
-    rbuf.resize(4);
+    std::vector<char> rbuf(4 + k_max_msg);
     errno = 0;
-    int32_t err = read_full(fd, &rbuf[0], 4);
+    int32_t err = read_full(fd, rbuf.data(), 4);
     if (err) {
         msg(errno == 0 ? "EOF" : "read() error");
         return err;
@@ -93,14 +98,19 @@ static int32_t read_res(int fd) {
         return -1;
     }
 
-    rbuf.resize(4 + len);
     err = read_full(fd, &rbuf[4], len);
     if (err) {
         msg("read() error");
         return err;
     }
 
-    printf("len:%u data:%.*s\n", len, len < 100 ? len : 100, &rbuf[4]);
+    uint32_t rescode = 0;
+    if (len < 4) {
+        msg("bad response");
+        return -1;
+    }
+    memcpy(&rescode, &rbuf[4], 4);
+    printf("server says: [%u] %.*s\n", rescode, len - 4, &rbuf[8]);
     return 0;
 }
 
@@ -121,10 +131,17 @@ int main(int argc, char **argv) {
     }
 
     std::vector<std::string> cmd;
-    for (int i = 0; i < argc; i++) {
+    for (int i = 1; i < argc; i++) {
         cmd.push_back(argv[i]);
     }
-    int32_t err = send_req(fd, )
+    int32_t err = send_req(fd, cmd);
+    if (err) {
+        goto L_DONE;
+    }
+    err = read_res(fd);
+    if (err) {
+        goto L_DONE;
+    }
 L_DONE:
     close(fd);
     return 0;
